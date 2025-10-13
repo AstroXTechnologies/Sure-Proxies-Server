@@ -38,6 +38,22 @@ export class AuthService {
       const { idToken, localId, refreshToken, expiresIn } =
         await this.signInWithEmailAndPassword(email, password);
 
+      // Ensure email is verified in Firebase before issuing session
+      try {
+        const firebaseUser = await dbAuth.getUser(localId);
+        if (!firebaseUser.emailVerified) {
+          // Send a clear error object so frontend can detect this state
+          throw new UnauthorizedException({
+            message: 'Email not verified',
+            code: 'EMAIL_NOT_VERIFIED',
+          });
+        }
+      } catch (e) {
+        // If the thrown error is our UnauthorizedException, rethrow it
+        if (e instanceof UnauthorizedException) throw e;
+        // Otherwise ignore — sign-in already succeeded and we'll continue
+      }
+
       // Fetch or create Firestore user document
       let userDocSnap = await db.collection('users').doc(localId).get();
       if (!userDocSnap.exists) {
@@ -175,7 +191,8 @@ export class AuthService {
 
       (req as unknown as { user: typeof userData }).user = userData;
       return true;
-    } catch (error: any) {
+    } catch (err: unknown) {
+      const error = err as any;
       console.error('Error verifying token: ', error);
 
       // Check if token is expired

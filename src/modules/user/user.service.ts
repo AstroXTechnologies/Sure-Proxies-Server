@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import * as admin from 'firebase-admin';
+import nodemailer from 'nodemailer';
 import { db, dbAuth } from 'src/main';
 import { UserDoc, UserRole } from 'src/modules/user/user.model';
 import { CreateUserDTO } from './user.dto';
@@ -31,6 +32,13 @@ export class UserService {
         role: UserRole.USER,
       } as UserDoc);
 
+      // Attempt to send verification email (best-effort)
+      try {
+        await this.sendEmailVerification(record.uid, model.email);
+      } catch (e) {
+        console.warn('Failed to queue/send verification email:', e);
+      }
+
       const userDoc = await db.collection('users').doc(record.uid).get();
       const data = userDoc.data() as UserDoc | undefined;
 
@@ -54,6 +62,96 @@ export class UserService {
     } catch (error: unknown) {
       console.error(error, 'Error creating user');
       throw error;
+    }
+  }
+
+  /**
+   * After creating a Firebase user, generate an email verification link and send it.
+   * This method is safe to call in dev environments where SMTP may be absent; it will
+   * log the verification link instead.
+   */
+  private async sendEmailVerification(uid: string, email: string) {
+    try {
+      // Generate Firebase email verification link
+      const actionCodeSettings = {
+        // Redirect back to frontend sign-in page after verification
+        url: process.env.FRONTEND_URL
+          ? `${process.env.FRONTEND_URL}/signin`
+          : 'http://localhost:3000/signin',
+        handleCodeInApp: false,
+      };
+
+      const link = await dbAuth.generateEmailVerificationLink(
+        email,
+        actionCodeSettings,
+      );
+
+      // If SMTP config present, attempt to send email via nodemailer
+      const host = process.env.SMTP_HOST;
+      const port = process.env.SMTP_PORT
+        ? Number(process.env.SMTP_PORT)
+        : undefined;
+      const user = process.env.SMTP_USER;
+      const pass = process.env.SMTP_PASS;
+
+      if (host && port && user && pass) {
+        const transporter = nodemailer.createTransport({
+          host,
+          port,
+          secure: port === 465, // true for 465, false for other ports
+          auth: {
+            user,
+            pass,
+          },
+        });
+
+        const info = await transporter.sendMail({
+          from:
+            process.env.EMAIL_FROM ||
+            `no-reply@${process.env.FRONTEND_BASE_DOMAIN || 'localhost'}`,
+          to: email,
+          subject: 'Verify your email for Sure Proxies',
+          html: `<p>Hello,</p>
+<p>Thanks for creating an account. Please verify your email by clicking the link below:</p>
+<p><a href="${link}">Verify Email</a></p>
+<p>If the link doesn't work, copy and paste the following URL into your browser:</p>
+<pre>${link}</pre>
+<p>Thanks,<br/>Sure Proxies Team</p>`,
+        });
+
+        console.log('✅ [EMAIL] Verification email sent:', info.messageId);
+        return;
+      }
+
+      // Fallback: log the link (useful for development)
+      console.warn('⚠️ [EMAIL] SMTP not configured. Verification link: ', link);
+    } catch (err) {
+      console.error('❌ [EMAIL] Failed to send verification email:', err);
+      // Do not fail user creation if email sending fails - just log
+    }
+  }
+
+  /**
+   * Public helper to resend verification link to an email address.
+   * This reuses the private sendEmailVerification method and is safe to call
+   * even if SMTP is not configured (it will log the link).
+   */
+  public async resendVerification(email: string): Promise<void> {
+    try {
+      // Try to resolve a UID for the provided email if possible
+      let uid: string | undefined;
+      try {
+        const user = await dbAuth.getUserByEmail(email);
+        uid = user.uid;
+      } catch (err) {
+        // If user not found in Firebase, throw a not found error
+        throw new HttpException('Account not found', HttpStatus.NOT_FOUND);
+      }
+
+      await this.sendEmailVerification(uid, email);
+    } catch (err) {
+      console.error('Error resending verification:', err);
+      throw err;
     }
   }
 
