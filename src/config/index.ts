@@ -35,9 +35,6 @@ export const env: Env = {
 
 export const isDev = env.NODE_ENV !== 'production';
 
-/**
- * Helper to split and sanitize comma-separated origins
- */
 export function parseOrigins(orig?: string) {
   if (!orig) return [] as string[];
   return orig

@@ -1,5 +1,7 @@
+import { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import * as express from 'express';
+import { ExpressAdapter } from '@nestjs/platform-express';
+import express from 'express';
 import * as firebaseAdmin from 'firebase-admin';
 import { AllExceptionsFilter } from 'src/common/filters/all-exception-filter';
 import { setupSwagger } from 'src/swagger';
@@ -7,8 +9,6 @@ import { AppModule } from './app.module';
 import { env, isDev, parseOrigins } from './config';
 
 const filePath = env.SERVICE_ACCOUNT_PATH;
-// const filePath =
-//   process.env.SERVICE_ACCOUNT_PATH || '/etc/secrets/serviceAccount.json';
 
 firebaseAdmin.initializeApp({
   credential: firebaseAdmin.credential.cert(filePath),
@@ -17,9 +17,9 @@ firebaseAdmin.initializeApp({
 export const db = firebaseAdmin.firestore();
 export const dbFireStore = firebaseAdmin.firestore;
 export const dbAuth = firebaseAdmin.auth();
+export async function bootstrap(): Promise<INestApplication> {
+  const app = await NestFactory.create(AppModule, new ExpressAdapter());
 
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
   app.use(
     express.json({
       verify: (req: express.Request & { rawBody?: string }, _res, buf) => {
@@ -30,8 +30,6 @@ async function bootstrap() {
     }),
   );
 
-  // CORS: cannot use wildcard '*' together with credentials. Reflect only approved origins.
-  // --- CORS CONFIG (enhanced diagnostics) ---
   const sanitize = (val?: string) =>
     (val || '')
       .trim()
@@ -43,6 +41,9 @@ async function bootstrap() {
   const allowList = [
     'http://localhost:3000',
     'https://sure-proxies.vercel.app',
+    'https://sureproxies.com',
+    'https://sure-fe--sure-proxies.us-central1.hosted.app',
+    'https://www.sureproxies.com',
     'http://127.0.0.1:3000',
     'http://localhost:3002',
 
@@ -96,8 +97,12 @@ async function bootstrap() {
   });
   setupSwagger(app);
   app.useGlobalFilters(new AllExceptionsFilter());
-  await app.listen(env.PORT ?? 3002);
+  if (!process.env.FUNCTION_NAME) {
+    await app.listen(env.PORT ?? 3002);
+  }
+  return app; // return the app for Cloud Functions to use
 }
+
 bootstrap().catch((err) => {
   console.error('Failed to start application:', err);
   process.exit(1);
