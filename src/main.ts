@@ -42,6 +42,7 @@ export async function bootstrap(): Promise<INestApplication> {
     'http://localhost:3000',
     'https://sure-proxies.vercel.app',
     'https://sureproxies.com',
+    'https://api-snvxkqh24a-uc.a.run.app',
     'https://sure-fe--sure-proxies.us-central1.hosted.app',
     'https://www.sureproxies.com',
     'http://127.0.0.1:3000',
@@ -90,16 +91,17 @@ export async function bootstrap(): Promise<INestApplication> {
       callback(new Error('Not allowed by CORS'));
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    // allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     exposedHeaders: ['Content-Length', 'Content-Type'],
     credentials: true,
     maxAge: 600,
   });
   setupSwagger(app);
   app.useGlobalFilters(new AllExceptionsFilter());
-  if (!process.env.FUNCTION_NAME) {
-    await app.listen(env.PORT ?? 3002);
-  }
+  // if (!process.env.FUNCTION_NAME) {
+  //   await app.listen(env.PORT ?? 3002);
+  // }
+  await app.init();
   return app; // return the app for Cloud Functions to use
 }
 

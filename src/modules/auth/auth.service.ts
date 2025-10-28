@@ -131,7 +131,7 @@ export class AuthService {
     refreshToken: string;
     expiresIn: string;
   }> {
-    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.FIREBASE_API_KEY || ''}`;
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.CUSTOM_FIREBASE_API_KEY || ''}`;
     return await this.sendPostRequest(url, {
       email,
       password,

@@ -1,11 +1,6 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-/**
- * Centralized environment configuration
- * Keeps process.env usage in one place and applies sensible defaults + parsing
- */
-
 type Env = {
   SERVICE_ACCOUNT_PATH: string;
   FRONTEND_URL: string;
@@ -28,7 +23,7 @@ export const env: Env = {
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
   FRONTEND_BASE_DOMAIN: process.env.FRONTEND_BASE_DOMAIN || '',
   CORS_ORIGINS: process.env.CORS_ORIGINS || '',
-  PORT: parsePort(process.env.PORT),
+  PORT: parsePort(process.env.C_PORT),
   NODE_ENV: process.env.NODE_ENV || 'development',
   DEBUG_PROXY_ORDER: process.env.DEBUG_PROXY_ORDER === '1' || false,
 };

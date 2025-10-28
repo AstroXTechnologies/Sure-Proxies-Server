@@ -4,6 +4,7 @@
       "source": ".",
       "codebase": "default",
       "disallowLegacyRuntimeConfig": true,
+      "public": true,
       "ignore": [
         "node_modules",
         ".git",
