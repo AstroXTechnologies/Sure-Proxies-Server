@@ -282,79 +282,196 @@ export class ProxyOrderService {
 
   /**
    * Ensure user has virtual account (create if not exists)
-   * This implements lazy creation - only creates on first purchase
+   * This implements lazy creation with race condition protection via Firestore transaction
+   *
+   * @param userId - The user ID to create/verify virtual account for
+   * @throws HttpException if user not found or creation fails
    */
   async ensureVirtualAccount(userId: string): Promise<void> {
     try {
       const virtualAccountRef = db.collection('virtual_accounts').doc(userId);
-      const virtualAccountSnap = await virtualAccountRef.get();
 
-      if (virtualAccountSnap.exists) {
-        console.log('✅ [VIRTUAL ACCOUNT] User already has virtual account');
+      // Use Firestore transaction to prevent race conditions
+      const result = await db.runTransaction(async (transaction) => {
+        const virtualAccountSnap = await transaction.get(virtualAccountRef);
+
+        if (virtualAccountSnap.exists) {
+          console.log(
+            '✅ [VIRTUAL ACCOUNT] User already has virtual account:',
+            userId,
+          );
+          return { alreadyExists: true };
+        }
+
+        console.log(
+          '📝 [VIRTUAL ACCOUNT] No virtual account found, will create for user:',
+          userId,
+        );
+
+        // Get user details within transaction to ensure consistency
+        const userRef = db.collection('users').doc(userId);
+        const userSnap = await transaction.get(userRef);
+        const userData = userSnap.data();
+
+        if (!userData) {
+          console.error(
+            '❌ [VIRTUAL ACCOUNT] User not found in Firestore for userId:',
+            userId,
+          );
+          throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+        }
+
+        // Validate required fields
+        const email =
+          userData.email && typeof userData.email === 'string'
+            ? userData.email.trim()
+            : null;
+        const fullName =
+          userData.fullName && typeof userData.fullName === 'string'
+            ? userData.fullName.trim()
+            : null;
+        const phoneNumber =
+          userData.phoneNumber && typeof userData.phoneNumber === 'string'
+            ? userData.phoneNumber.trim()
+            : null;
+
+        if (!email || !fullName) {
+          console.error('❌ [VIRTUAL ACCOUNT] Missing required user fields:', {
+            userId,
+            hasEmail: !!email,
+            hasFullName: !!fullName,
+            hasPhone: !!phoneNumber,
+          });
+          throw new HttpException(
+            'User profile incomplete. Please update your email and full name.',
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+
+        // Reserve the spot by writing a placeholder (prevents concurrent creation)
+        transaction.set(virtualAccountRef, {
+          userId,
+          status: 'creating',
+          createdAt: new Date(),
+        });
+
+        return {
+          alreadyExists: false,
+          userData: { email, fullName, phoneNumber },
+        };
+      });
+
+      // If already exists, we're done
+      if (result.alreadyExists) {
         return;
       }
 
-      console.log(
-        '📝 [VIRTUAL ACCOUNT] No virtual account found, creating one for user:',
-        userId,
-      );
+      // Create virtual account via PaymentPoint API (outside transaction)
+      // This can be retried if it fails
+      let virtualAccount: Record<string, unknown> | null = null;
 
-      // Get user details
-      const userSnap = await db.collection('users').doc(userId).get();
-      const userData = userSnap.data();
+      // Retry logic for transient failures
+      const maxRetries = 3;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(
+            `🔄 [VIRTUAL ACCOUNT] Creating account (attempt ${attempt}/${maxRetries}) for user:`,
+            userId,
+          );
 
-      if (!userData) {
-        console.error(
-          '[VIRTUAL ACCOUNT] User not found in Firestore for userId:',
+          virtualAccount = (await this.paymentPointService.createVirtualAccount(
+            {
+              email: result.userData!.email,
+              name: result.userData!.fullName,
+              phoneNumber: result.userData!.phoneNumber || '',
+            },
+          )) as Record<string, unknown>;
+
+          console.log(
+            '✅ [VIRTUAL ACCOUNT] PaymentPoint API success:',
+            virtualAccount ? Object.keys(virtualAccount) : 'null',
+          );
+          break; // Success, exit retry loop
+        } catch (apiError: any) {
+          console.error(
+            `❌ [VIRTUAL ACCOUNT] PaymentPoint API error (attempt ${attempt}/${maxRetries}):`,
+            {
+              message: apiError?.message || 'Unknown error',
+              status: apiError?.response?.status,
+              data: apiError?.response?.data,
+            },
+          );
+
+          // Only retry on network/timeout errors, not on validation errors
+          const isRetryable =
+            apiError?.code === 'ECONNABORTED' ||
+            apiError?.code === 'ETIMEDOUT' ||
+            apiError?.code === 'ECONNREFUSED' ||
+            apiError?.response?.status >= 500;
+
+          if (!isRetryable || attempt === maxRetries) {
+            // Clean up placeholder on final failure
+            await virtualAccountRef.delete();
+            const statusCode: number =
+              typeof apiError?.response?.status === 'number'
+                ? apiError.response.status
+                : HttpStatus.BAD_GATEWAY;
+            throw new HttpException(
+              `Failed to create virtual account: ${apiError?.message || 'PaymentPoint API error'}`,
+              statusCode,
+            );
+          }
+
+          // Exponential backoff: 1s, 2s, 4s
+          await new Promise((resolve) =>
+            setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)),
+          );
+        }
+      }
+
+      // Update with actual virtual account data
+      try {
+        const toSave: Record<string, unknown> = {
+          ...virtualAccount,
           userId,
-        );
-        throw new HttpException('User not found', HttpStatus.NOT_FOUND);
-      }
-      // Create virtual account via PaymentPoint API
-      let virtualAccount;
-      try {
-        virtualAccount = await this.paymentPointService.createVirtualAccount({
-          email: userData.email,
-          name: userData.fullName,
-          phoneNumber: userData.phoneNumber,
-        });
-        console.log(
-          '[VIRTUAL ACCOUNT] PaymentPoint API response:',
-          virtualAccount,
-        );
-      } catch (apiError) {
-        console.error('[VIRTUAL ACCOUNT] PaymentPoint API error:', apiError);
-        throw apiError;
-      }
+          status: 'active',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
 
-      // Save to database
-      try {
-        const toSave: Record<string, unknown> = Object.assign(
-          {},
-          virtualAccount || ({} as Record<string, unknown>),
-          { userId, createdAt: new Date() },
-        );
         await virtualAccountRef.set(toSave);
         console.log(
           '✅ [VIRTUAL ACCOUNT] Virtual account created and saved for user:',
           userId,
         );
-      } catch (dbError) {
+      } catch (dbError: any) {
         console.error(
-          '[VIRTUAL ACCOUNT] Error saving virtual account to Firestore:',
-          dbError,
+          '❌ [VIRTUAL ACCOUNT] Error saving virtual account to Firestore:',
+          {
+            userId,
+            error: dbError?.message || 'Unknown error',
+          },
         );
-        throw dbError;
+        // Try to clean up
+        await virtualAccountRef.delete().catch(() => {});
+        throw new HttpException(
+          'Failed to save virtual account',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
       }
-    } catch (error) {
-      console.error(
-        '❌ [VIRTUAL ACCOUNT] Error ensuring virtual account:',
-        error,
-      );
-      throw new HttpException(
-        'Failed to create virtual account',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    } catch (error: any) {
+      // Only log if not already an HttpException (avoid double-logging)
+      if (!(error instanceof HttpException)) {
+        console.error('❌ [VIRTUAL ACCOUNT] Unexpected error:', {
+          userId,
+          error: error?.message || 'Unknown error',
+        });
+        throw new HttpException(
+          'Failed to create virtual account',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+      throw error;
     }
   }
 
