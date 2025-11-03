@@ -1,11 +1,14 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { db, dbAuth } from 'src/main';
+import { PaymentpointService } from 'src/modules/paymentpoint/paymentpoint.service';
 import { UserDoc, UserRole } from 'src/modules/user/user.model';
 import { CreateUserDTO } from './user.dto';
 
 @Injectable()
 export class UserService {
+  constructor(private readonly paymentpointService: PaymentpointService) {}
+
   // Safely format various timestamp/values returned from Firestore into ISO strings
   private formatValue(val: unknown): string | null {
     if (val == null) return null;
@@ -41,7 +44,16 @@ export class UserService {
   }
 
   public async create(model: CreateUserDTO): Promise<UserDoc> {
+    let authUserId: string | null = null;
+    let userDocCreated = false;
+
     try {
+      // Step 1: Create Firebase Auth user
+      console.log('📝 [USER CREATION] Creating Firebase Auth user:', {
+        email: model.email,
+        fullName: model.fullName,
+      });
+
       const record = await dbAuth.createUser({
         displayName: model.fullName,
         email: model.email,
@@ -54,6 +66,12 @@ export class UserService {
           HttpStatus.INTERNAL_SERVER_ERROR,
         );
       }
+
+      authUserId = record.uid;
+      console.log('✅ [USER CREATION] Firebase Auth user created:', authUserId);
+
+      // Step 2: Save user document to Firestore
+      console.log('📝 [USER CREATION] Saving user document to Firestore');
       await this.saveUser(record.uid, {
         uid: record.uid,
         email: model.email,
@@ -65,6 +83,52 @@ export class UserService {
         role: UserRole.USER,
       } as UserDoc);
 
+      userDocCreated = true;
+      console.log('✅ [USER CREATION] User document saved');
+
+      // Step 3: Create virtual account (non-blocking, with retry safety)
+      console.log('📝 [USER CREATION] Creating virtual account');
+      try {
+        const virtualAccount =
+          await this.paymentpointService.createVirtualAccount({
+            email: model.email,
+            name: model.fullName,
+            phoneNumber: model.phoneNumber || '',
+          });
+
+        // Save virtual account to Firestore
+        const virtualAccountRef = db
+          .collection('virtual_accounts')
+          .doc(record.uid);
+        await virtualAccountRef.set({
+          ...(virtualAccount as Record<string, unknown>),
+          userId: record.uid,
+          status: 'active',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        console.log(
+          '✅ [USER CREATION] Virtual account created and saved:',
+          record.uid,
+        );
+      } catch (virtualAccountError: any) {
+        // Log error but don't fail user creation
+        // Virtual account will be created lazily on first purchase/deposit
+        console.warn(
+          '⚠️ [USER CREATION] Failed to create virtual account during registration:',
+          {
+            userId: record.uid,
+            error:
+              virtualAccountError instanceof Error
+                ? virtualAccountError.message
+                : String(virtualAccountError || 'Unknown error'),
+            willCreateLazily: true,
+          },
+        );
+      }
+
+      // Step 4: Verify user creation
       const userDoc = await db.collection('users').doc(record.uid).get();
       const data = userDoc.data() as UserDoc | undefined;
 
@@ -74,6 +138,8 @@ export class UserService {
           HttpStatus.INTERNAL_SERVER_ERROR,
         );
       }
+
+      console.log('✅ [USER CREATION] User creation completed:', record.uid);
 
       return {
         uid: data.uid,
@@ -85,8 +151,39 @@ export class UserService {
         purchases: data.purchases,
         role: data.role,
       };
-    } catch (error: unknown) {
-      console.error(error, 'Error creating user');
+    } catch (error: any) {
+      console.error('❌ [USER CREATION] Error during user creation:', {
+        error: error instanceof Error ? error.message : String(error),
+        email: model.email,
+      });
+
+      // Rollback: Clean up any partially created resources
+      if (authUserId) {
+        console.log('🔄 [USER CREATION] Rolling back - deleting auth user');
+        try {
+          await dbAuth.deleteUser(authUserId);
+          console.log('✅ [USER CREATION] Auth user deleted');
+        } catch (deleteError) {
+          console.error(
+            '❌ [USER CREATION] Failed to delete auth user during rollback:',
+            deleteError,
+          );
+        }
+      }
+
+      if (userDocCreated && authUserId) {
+        console.log('🔄 [USER CREATION] Rolling back - deleting user document');
+        try {
+          await db.collection('users').doc(authUserId).delete();
+          console.log('✅ [USER CREATION] User document deleted');
+        } catch (deleteError) {
+          console.error(
+            '❌ [USER CREATION] Failed to delete user document during rollback:',
+            deleteError,
+          );
+        }
+      }
+
       throw error;
     }
   }
@@ -94,7 +191,6 @@ export class UserService {
   async saveUser(userId: string, userData: UserDoc): Promise<void> {
     try {
       const userRef = db.collection('users').doc(userId);
-      // ✅ Just save the user - virtual accounts created on first purchase
       await userRef.set(userData);
     } catch (error) {
       console.error('❌ [USER] Error saving user in db:', error);

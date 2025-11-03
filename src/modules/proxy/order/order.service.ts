@@ -282,6 +282,13 @@ export class ProxyOrderService {
 
   /**
    * Ensure user has virtual account (create if not exists)
+   *
+   * NOTE: Virtual accounts are now created during user registration (user.service.ts).
+   * This method serves as a FALLBACK safety net for:
+   * - Users created before this feature was implemented
+   * - Cases where registration-time creation failed
+   * - Manual user creation scenarios
+   *
    * This implements lazy creation with race condition protection via Firestore transaction
    *
    * @param userId - The user ID to create/verify virtual account for
