@@ -96,17 +96,26 @@ export class UserService {
             phoneNumber: model.phoneNumber || '',
           });
 
-        // Save virtual account to Firestore
+        console.log(
+          '📋 [USER CREATION] Virtual account response received:',
+          JSON.stringify(virtualAccount, null, 2),
+        );
+
+        // Save virtual account to Firestore with proper structure
         const virtualAccountRef = db
           .collection('virtual_accounts')
           .doc(record.uid);
-        await virtualAccountRef.set({
-          ...(virtualAccount as Record<string, unknown>),
+
+        // Ensure we preserve the entire PaymentPoint response structure
+        const accountData = {
           userId: record.uid,
           status: 'active',
           createdAt: new Date(),
           updatedAt: new Date(),
-        });
+          ...(virtualAccount as Record<string, unknown>),
+        };
+
+        await virtualAccountRef.set(accountData);
 
         console.log(
           '✅ [USER CREATION] Virtual account created and saved:',

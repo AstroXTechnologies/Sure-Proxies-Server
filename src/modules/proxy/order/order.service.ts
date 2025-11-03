@@ -438,12 +438,18 @@ export class ProxyOrderService {
 
       // Update with actual virtual account data
       try {
+        console.log(
+          '📋 [VIRTUAL ACCOUNT] PaymentPoint response structure:',
+          JSON.stringify(virtualAccount, null, 2),
+        );
+
+        // Preserve the entire PaymentPoint response structure
         const toSave: Record<string, unknown> = {
-          ...virtualAccount,
           userId,
           status: 'active',
           createdAt: new Date(),
           updatedAt: new Date(),
+          ...virtualAccount,
         };
 
         await virtualAccountRef.set(toSave);
