@@ -5,6 +5,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { db } from 'src/main';
+import { VirtualAccountService } from '../account/virtual/account.service';
 import { ProxyOrderService } from '../proxy/order/order.service';
 import { TransactionsService } from '../transaction/transaction.service';
 import { Wallet, WalletTransaction, WithdrawalRequest } from './wallet.model';
@@ -18,6 +19,7 @@ export class WalletService {
     private transactionsService: TransactionsService,
     @Inject(forwardRef(() => ProxyOrderService))
     private proxyOrderService: ProxyOrderService,
+    private virtualAccountService: VirtualAccountService,
   ) {}
 
   async getOrCreateWallet(userId: string): Promise<Wallet> {
@@ -60,7 +62,7 @@ export class WalletService {
     }
 
     // Ensure user has a virtual account (create if not exists)
-    await this.proxyOrderService.ensureVirtualAccount(userId);
+    await this.virtualAccountService.ensureVirtualAccount(userId);
 
     // Wallet operates in NGN. Store deposit amounts in NGN.
     const amountNGN = Math.round(amountNaira);

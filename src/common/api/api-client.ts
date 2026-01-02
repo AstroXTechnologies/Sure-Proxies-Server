@@ -97,13 +97,17 @@ export class ApiClient {
           'api-key': this.paymentPointApiKey,
         },
       });
-      if (response.status !== 201) {
-        throw new Error('Payment processing failed. Please try again.');
+      // Accept both 200 and 201 as success
+      if (response.status !== 200 && response.status !== 201) {
+        throw new Error(
+          `Payment processing failed with status ${response.status}`,
+        );
       }
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Error fetching ${endpoint}: `, error);
-      return null;
+      // Re-throw error so the caller can handle retries
+      throw error;
     }
   }
 }

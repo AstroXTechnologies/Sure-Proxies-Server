@@ -1,13 +1,17 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { db, dbAuth } from 'src/main';
+import { VirtualAccountService } from 'src/modules/account/virtual/account.service';
 import { PaymentpointService } from 'src/modules/paymentpoint/paymentpoint.service';
 import { UserDoc, UserRole } from 'src/modules/user/user.model';
 import { CreateUserDTO } from './user.dto';
 
 @Injectable()
 export class UserService {
-  constructor(private readonly paymentpointService: PaymentpointService) {}
+  constructor(
+    private readonly paymentpointService: PaymentpointService,
+    private readonly virtualAccountService: VirtualAccountService,
+  ) {}
 
   // Safely format various timestamp/values returned from Firestore into ISO strings
   private formatValue(val: unknown): string | null {
@@ -89,34 +93,7 @@ export class UserService {
       // Step 3: Create virtual account (non-blocking, with retry safety)
       console.log('📝 [USER CREATION] Creating virtual account');
       try {
-        const virtualAccount =
-          await this.paymentpointService.createVirtualAccount({
-            email: model.email,
-            name: model.fullName,
-            phoneNumber: model.phoneNumber || '',
-          });
-
-        console.log(
-          '📋 [USER CREATION] Virtual account response received:',
-          JSON.stringify(virtualAccount, null, 2),
-        );
-
-        // Save virtual account to Firestore with proper structure
-        const virtualAccountRef = db
-          .collection('virtual_accounts')
-          .doc(record.uid);
-
-        // Ensure we preserve the entire PaymentPoint response structure
-        const accountData = {
-          userId: record.uid,
-          status: 'active',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          ...(virtualAccount as Record<string, unknown>),
-        };
-
-        await virtualAccountRef.set(accountData);
-
+        await this.virtualAccountService.ensureVirtualAccount(record.uid);
         console.log(
           '✅ [USER CREATION] Virtual account created and saved:',
           record.uid,

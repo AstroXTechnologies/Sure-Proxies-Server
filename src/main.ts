@@ -47,6 +47,7 @@ export async function bootstrap(): Promise<INestApplication> {
     'https://www.sureproxies.com',
     'http://127.0.0.1:3000',
     'http://localhost:3002',
+    'http://localhost:3003',
 
     sanitize(env.FRONTEND_URL), // primary frontend
     ...extraOrigins,
@@ -99,9 +100,9 @@ export async function bootstrap(): Promise<INestApplication> {
   setupSwagger(app);
   app.useGlobalFilters(new AllExceptionsFilter());
   // if (!process.env.FUNCTION_NAME) {
-  //   await app.listen(env.PORT ?? 3002);
+  await app.listen(env.PORT ?? 3002);
   // }
-  await app.init();
+  // await app.init();
   return app; // return the app for Cloud Functions to use
 }
 
