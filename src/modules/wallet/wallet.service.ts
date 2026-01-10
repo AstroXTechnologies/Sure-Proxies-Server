@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { db } from 'src/main';
 import { VirtualAccountService } from '../account/virtual/account.service';
+import { AuditAction } from '../audit/audit.model';
+import { AuditService } from '../audit/audit.service';
 import { ProxyOrderService } from '../proxy/order/order.service';
 import { TransactionsService } from '../transaction/transaction.service';
 import { Wallet, WalletTransaction, WithdrawalRequest } from './wallet.model';
@@ -20,6 +22,7 @@ export class WalletService {
     @Inject(forwardRef(() => ProxyOrderService))
     private proxyOrderService: ProxyOrderService,
     private virtualAccountService: VirtualAccountService,
+    private auditService: AuditService,
   ) {}
 
   async getOrCreateWallet(userId: string): Promise<Wallet> {
@@ -447,6 +450,120 @@ export class WalletService {
       return transaction.id;
     } catch (error) {
       // If wallet update fails, mark transaction as FAILED
+      await this.transactionsService.update(transaction.id, {
+        status: 'FAILED',
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Admin-only: Adjust wallet balance (credit or debit)
+   * Positive amount = credit (add to balance)
+   * Negative amount = debit (subtract from balance)
+   * Creates an audit trail via wallet transaction and audit log
+   */
+  async adminAdjustBalance(
+    userId: string,
+    amount: number,
+    reason: string,
+    adminId: string,
+    adminEmail: string,
+  ): Promise<{ success: boolean; newBalance: number; transactionId: string }> {
+    if (amount === 0) {
+      throw new BadRequestException('Amount cannot be zero');
+    }
+
+    if (!reason || reason.trim().length === 0) {
+      throw new BadRequestException('Reason is required for admin adjustments');
+    }
+
+    const wallet = await this.getOrCreateWallet(userId);
+    const walletRef = db.collection(this.walletCollection).doc(wallet.id);
+
+    // For debits, ensure sufficient balance
+    if (amount < 0 && wallet.balance + amount < 0) {
+      throw new BadRequestException(
+        `Insufficient balance. Current: ₦${wallet.balance}, Attempted debit: ₦${Math.abs(amount)}`,
+      );
+    }
+
+    // Create transaction record
+    const transactionType = amount > 0 ? 'DEPOSIT' : 'WITHDRAWAL';
+    const transaction = await this.transactionsService.create(userId, {
+      type: transactionType,
+      amount: Math.abs(amount),
+      reference: `ADMIN-ADJUST-${Date.now()}`,
+    });
+
+    try {
+      let newBalance = 0;
+
+      await db.runTransaction(async (firestoreTx) => {
+        const walletDoc = await firestoreTx.get(walletRef);
+
+        if (!walletDoc.exists) {
+          throw new BadRequestException('Wallet not found');
+        }
+
+        const currentWallet = walletDoc.data() as Wallet;
+
+        // Double-check for debits inside transaction
+        if (amount < 0 && currentWallet.balance + amount < 0) {
+          throw new BadRequestException('Insufficient balance');
+        }
+
+        newBalance = currentWallet.balance + amount;
+
+        firestoreTx.update(walletRef, {
+          balance: newBalance,
+          updatedAt: new Date(),
+        });
+      });
+
+      // Mark transaction as SUCCESS
+      await this.transactionsService.update(transaction.id, {
+        status: 'SUCCESS',
+      });
+
+      // Create wallet transaction record for audit
+      const adjustmentType = amount > 0 ? 'DEPOSIT' : 'WITHDRAWAL';
+      await this.createWalletTransaction({
+        userId,
+        type: adjustmentType,
+        amount: Math.abs(amount),
+        status: 'SUCCESS',
+        description: `[ADMIN] ${amount > 0 ? 'Credit' : 'Debit'} ₦${Math.abs(amount)} - ${reason}`,
+        referenceId: transaction.id,
+      });
+
+      // Log to audit system
+      await this.auditService.create({
+        adminId,
+        adminEmail,
+        action:
+          amount > 0 ? AuditAction.WALLET_CREDIT : AuditAction.WALLET_DEBIT,
+        targetType: 'wallet',
+        targetId: userId,
+        details: {
+          amount,
+          reason,
+          previousBalance: wallet.balance,
+          newBalance,
+          transactionId: transaction.id,
+        },
+      });
+
+      console.log(
+        `✅ [WALLET] Admin adjustment: ${amount > 0 ? '+' : ''}₦${amount} for user ${userId}. Reason: ${reason}`,
+      );
+
+      return {
+        success: true,
+        newBalance,
+        transactionId: transaction.id,
+      };
+    } catch (error) {
       await this.transactionsService.update(transaction.id, {
         status: 'FAILED',
       });

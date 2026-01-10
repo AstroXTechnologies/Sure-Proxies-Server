@@ -1,5 +1,18 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CreateTransactionDto, UpdateTransactionDto } from './transaction.dto';
 
 import { ApAuthGuard } from 'src/modules/auth/auth-guard.decorator';
@@ -47,5 +60,41 @@ export class TransactionsController {
   @ApiOperation({ summary: 'Get all transaction histories for a user' })
   async getTransactionHistoryByUserId(@Param('userId') userId: string) {
     return this.service.getTransactionHistoryByUserId(userId);
+  }
+
+  // ========== ADMIN ENDPOINTS ==========
+
+  @Get('admin/all')
+  @ApiOperation({
+    summary: 'Get all transactions (Admin only)',
+    description: 'Retrieve all transactions with pagination and filters.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  @ApiQuery({ name: 'type', required: false, type: String })
+  @ApiQuery({ name: 'userId', required: false, type: String })
+  @ApAuthGuard(UserRole.ADMIN)
+  findAllAdmin(
+    @Query('page') page = '1',
+    @Query('limit') limit = '50',
+    @Query('status') status?: string,
+    @Query('type') type?: string,
+    @Query('userId') userId?: string,
+  ) {
+    const p = Math.max(1, Number(page) || 1);
+    const l = Math.min(100, Math.max(1, Number(limit) || 50));
+
+    return this.service.findAllAdmin(p, l, { status, type, userId });
+  }
+
+  @Get('admin/stats')
+  @ApiOperation({
+    summary: 'Get transaction statistics (Admin only)',
+    description: 'Get count of transactions by status and type.',
+  })
+  @ApAuthGuard(UserRole.ADMIN)
+  getStats() {
+    return this.service.getTransactionStats();
   }
 }

@@ -7,6 +7,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Request } from 'express';
+import { AuditAction } from 'src/modules/audit/audit.model';
+import { AuditService } from 'src/modules/audit/audit.service';
 import { ApAuthGuard } from 'src/modules/auth/auth-guard.decorator';
 import { UserRole } from 'src/modules/user/user.model';
 
@@ -28,7 +30,10 @@ interface AuthenticatedRequest extends Request {
 @ApiTags('Proxy Order')
 @Controller('proxy_order')
 export class ProxyOrderController {
-  constructor(private readonly proxyOrderService: ProxyOrderService) {}
+  constructor(
+    private readonly proxyOrderService: ProxyOrderService,
+    private readonly auditService: AuditService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -161,6 +166,7 @@ export class ProxyOrderController {
   }
 
   @Post('admin/update-markup')
+  @ApAuthGuard(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update pricing markup (Admin only)' })
   @ApiBody({
     schema: {
@@ -177,13 +183,30 @@ export class ProxyOrderController {
     },
   })
   async updateMarkup(
+    @Req() req: AuthenticatedRequest,
     @Body('globalMarkup') globalMarkup: number,
     @Body('perServiceMarkup') perServiceMarkup: Record<string, number>,
   ) {
-    return this.proxyOrderService.updateMarkup(globalMarkup, perServiceMarkup);
+    const result = await this.proxyOrderService.updateMarkup(
+      globalMarkup,
+      perServiceMarkup,
+    );
+
+    // Audit log
+    await this.auditService.create({
+      adminId: req.user.uid,
+      adminEmail: req.user.email || 'unknown',
+      action: AuditAction.CONFIG_UPDATE,
+      targetType: 'config',
+      targetId: 'pricing-markup',
+      details: { globalMarkup, perServiceMarkup },
+    });
+
+    return result;
   }
 
   @Post('admin/create-config')
+  @ApAuthGuard(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create initial pricing config (Admin only)' })
   @ApiBody({
     schema: {
@@ -199,10 +222,26 @@ export class ProxyOrderController {
     },
   })
   async createConfig(
+    @Req() req: AuthenticatedRequest,
     @Body('globalMarkup') globalMarkup: number,
     @Body('perServiceMarkup') perServiceMarkup: Record<string, number>,
   ) {
-    return this.proxyOrderService.createConfig(globalMarkup, perServiceMarkup);
+    const result = await this.proxyOrderService.createConfig(
+      globalMarkup,
+      perServiceMarkup,
+    );
+
+    // Audit log
+    await this.auditService.create({
+      adminId: req.user.uid,
+      adminEmail: req.user.email || 'unknown',
+      action: AuditAction.CONFIG_UPDATE,
+      targetType: 'config',
+      targetId: 'pricing-config',
+      details: { globalMarkup, perServiceMarkup },
+    });
+
+    return result;
   }
 
   @Get('admin/config')
@@ -237,6 +276,21 @@ export class ProxyOrderController {
     @Req() req: AuthenticatedRequest,
   ) {
     const adminId = req.user?.uid || 'unknown-admin';
-    return this.proxyOrderService.claimProviderMapping(providerId, adminId);
+    const result = await this.proxyOrderService.claimProviderMapping(
+      providerId,
+      adminId,
+    );
+
+    // Audit log
+    await this.auditService.create({
+      adminId: req.user.uid,
+      adminEmail: req.user.email || 'unknown',
+      action: AuditAction.PROVIDER_CLAIM,
+      targetType: 'provider',
+      targetId: providerId,
+      details: { claimedBy: adminId },
+    });
+
+    return result;
   }
 }

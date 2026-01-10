@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { VirtualAccountModule } from 'src/modules/account/virtual/account.module';
+import { AuditModule } from 'src/modules/audit/audit.module';
 import { AuthModule } from 'src/modules/auth/auth.module';
 import { PaymentpointModule } from 'src/modules/paymentpoint/paymentpoint.module';
 import { ProxyOrderController } from 'src/modules/proxy/order/order.controller';
@@ -14,6 +15,7 @@ import { WalletModule } from 'src/modules/wallet/wallet.module';
     PaymentpointModule,
     WalletModule,
     VirtualAccountModule,
+    AuditModule,
   ],
   controllers: [ProxyOrderController],
   providers: [ProxyOrderService, ProxyOrderController],

@@ -1,5 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { VirtualAccountModule } from '../account/virtual/account.module';
+import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { ProxyOrderModule } from '../proxy/order/order.module';
 import { TransactionModule } from '../transaction/transaction.module';
@@ -11,6 +12,7 @@ import { WalletService } from './wallet.service';
     TransactionModule,
     AuthModule,
     VirtualAccountModule,
+    AuditModule,
     forwardRef(() => ProxyOrderModule),
   ],
   controllers: [WalletController],

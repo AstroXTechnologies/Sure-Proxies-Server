@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { db } from 'src/main';
 import { CreateTransactionDto, UpdateTransactionDto } from './transaction.dto';
@@ -148,5 +151,84 @@ export class TransactionsService {
       .get();
 
     return snapshot.docs.map((doc) => doc.data() as TransactionHistory);
+  }
+
+  // ========== ADMIN METHODS ==========
+
+  async findAllAdmin(
+    page: number,
+    limit: number,
+    filters?: {
+      status?: string;
+      type?: string;
+      userId?: string;
+    },
+  ): Promise<{
+    total: number;
+    page: number;
+    limit: number;
+    data: Transaction[];
+  }> {
+    let query: FirebaseFirestore.Query = db
+      .collection(this.collection)
+      .orderBy('createdAt', 'desc');
+
+    // Apply filters
+    if (filters?.status) {
+      query = query.where('status', '==', filters.status);
+    }
+    if (filters?.type) {
+      query = query.where('type', '==', filters.type);
+    }
+    if (filters?.userId) {
+      query = query.where('userId', '==', filters.userId);
+    }
+
+    // Get all matching docs for total count
+    const allDocs = await query.get();
+    const total = allDocs.size;
+
+    // Paginate
+    const offset = (page - 1) * limit;
+    const pageDocs = allDocs.docs.slice(offset, offset + limit);
+
+    const data = pageDocs.map((doc) => {
+      const docData = doc.data();
+      return {
+        ...docData,
+        id: doc.id,
+        createdAt:
+          typeof docData.createdAt?.toDate === 'function'
+            ? docData.createdAt.toDate()
+            : docData.createdAt,
+      } as Transaction;
+    });
+
+    return { total, page, limit, data };
+  }
+
+  async getTransactionStats(): Promise<{
+    byStatus: Record<string, number>;
+    byType: Record<string, number>;
+    total: number;
+  }> {
+    const snapshot = await db.collection(this.collection).get();
+    const byStatus: Record<string, number> = {};
+    const byType: Record<string, number> = {};
+
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data();
+      const status = data.status as string;
+      const type = data.type as string;
+
+      byStatus[status] = (byStatus[status] || 0) + 1;
+      byType[type] = (byType[type] || 0) + 1;
+    });
+
+    return {
+      byStatus,
+      byType,
+      total: snapshot.size,
+    };
   }
 }

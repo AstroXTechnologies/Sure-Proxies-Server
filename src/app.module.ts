@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AccountModule } from 'src/modules/account/account.module';
 import { VirtualAccountModule } from 'src/modules/account/virtual/account.module';
+import { AuditModule } from 'src/modules/audit/audit.module';
 import { AuthGuard } from 'src/modules/auth/auth.guard';
 import { AuthModule } from 'src/modules/auth/auth.module';
 import { PaymentpointModule } from 'src/modules/paymentpoint/paymentpoint.module';
@@ -27,6 +28,7 @@ import { UserModule } from './modules/user/user.module';
     PaymentpointModule,
     WebhookModule,
     WalletModule,
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [AppService, AuthGuard],

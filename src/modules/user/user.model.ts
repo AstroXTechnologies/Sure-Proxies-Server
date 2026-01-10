@@ -21,6 +21,7 @@ export interface UserDoc {
   lastLogin: admin.firestore.Timestamp | string | null;
   purchases: unknown[];
   role: UserRole;
+  isActive?: boolean; // defaults to true, false = suspended
 }
 
 export enum UserRole {

@@ -7,11 +7,14 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
+import { AuditAction } from 'src/modules/audit/audit.model';
+import { AuditService } from 'src/modules/audit/audit.service';
 import { ApAuthGuard } from 'src/modules/auth/auth-guard.decorator';
 import { CreateUserDTO } from './user.dto';
 import * as userModel from './user.model';
@@ -20,7 +23,10 @@ import { UserService } from './user.service';
 @ApiTags('User Modules')
 @Controller('user')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly auditService: AuditService,
+  ) {}
 
   @Post('createUser')
   @ApiOperation({
@@ -83,8 +89,38 @@ export class UserController {
   @ApiResponse({ status: 200, description: 'User updated.' })
   @ApiResponse({ status: 404, description: 'User not found.' })
   @ApAuthGuard(userModel.UserRole.ADMIN)
-  update(@Param('id') id: string, @Body() updateUserDto: userModel.UserDoc) {
-    return this.userService.update(id, updateUserDto);
+  async update(
+    @Req() req: { user: { uid: string; email?: string } },
+    @Param('id') id: string,
+    @Body() updateUserDto: userModel.UserDoc,
+  ) {
+    const result = await this.userService.update(id, updateUserDto);
+
+    // Determine which type of update for audit
+    let action: AuditAction = AuditAction.USER_UPDATE;
+    if (updateUserDto.role !== undefined) {
+      action = AuditAction.USER_ROLE_CHANGE;
+    }
+    if (updateUserDto.isActive === false) {
+      action = AuditAction.USER_SUSPEND;
+    } else if (updateUserDto.isActive === true) {
+      action = AuditAction.USER_UNSUSPEND;
+    }
+
+    // Log audit
+    await this.auditService.create({
+      adminId: req.user.uid,
+      adminEmail: req.user.email || 'unknown',
+      action,
+      targetType: 'user',
+      targetId: id,
+      details: {
+        updatedFields: Object.keys(updateUserDto),
+        ...updateUserDto,
+      },
+    });
+
+    return result;
   }
 
   @Delete(':id')
@@ -95,7 +131,22 @@ export class UserController {
   @ApiResponse({ status: 200, description: 'User deleted.' })
   @ApiResponse({ status: 404, description: 'User not found.' })
   @ApAuthGuard(userModel.UserRole.ADMIN)
-  remove(@Param('id') id: string) {
-    return this.userService.remove(id);
+  async remove(
+    @Req() req: { user: { uid: string; email?: string } },
+    @Param('id') id: string,
+  ) {
+    const result = await this.userService.remove(id);
+
+    // Log audit
+    await this.auditService.create({
+      adminId: req.user.uid,
+      adminEmail: req.user.email || 'unknown',
+      action: AuditAction.USER_UPDATE, // Could add USER_DELETE action
+      targetType: 'user',
+      targetId: id,
+      details: { action: 'deleted' },
+    });
+
+    return result;
   }
 }
